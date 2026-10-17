@@ -90,6 +90,6 @@ int main(int argc,char** argv) {
         }
         for(int i=0;i<17;++i){AlphaAudioProcessor p;p.setCurrentProgram(i);render(p,"preset","ALL",p.getProgramName(i),"preset-"+juce::String(i).paddedLeft('0',2)+"-"+slug(p.getProgramName(i)));}
     } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
-    directory.getChildFile("metrics.csv").replaceWithText(csv.str());
+    directory.getChildFile("metrics.csv").replaceWithText(csv.str(),false,false,"\n");
     std::cout<<"Result: "<<count<<" renders, "<<failures<<" failures, maximum raw peak "<<largest<<'\n';return failures?1:0;
 }
