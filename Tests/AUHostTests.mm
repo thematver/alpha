@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <numbers>
@@ -249,8 +250,8 @@ std::vector<AudioUnitParameterID> verifyParameters(AudioUnit unit)
     Boolean writable = false;
     checked(AudioUnitGetPropertyInfo(unit, kAudioUnitProperty_ParameterList,
                                      kAudioUnitScope_Global, 0, &bytes, &writable), "query parameter list");
-    require(bytes % sizeof(AudioUnitParameterID) == 0 && bytes / sizeof(AudioUnitParameterID) == 66,
-            "registered AU must expose exactly 66 global parameters");
+    require(bytes % sizeof(AudioUnitParameterID) == 0 && bytes / sizeof(AudioUnitParameterID) == 1445,
+            "registered AU must expose exactly 1445 global parameters");
     std::vector<AudioUnitParameterID> ids(bytes / sizeof(AudioUnitParameterID));
     const auto expectedBytes = bytes;
     checked(AudioUnitGetProperty(unit, kAudioUnitProperty_ParameterList, kAudioUnitScope_Global,
@@ -269,7 +270,7 @@ std::vector<AudioUnitParameterID> verifyParameters(AudioUnit unit)
         checked(AudioUnitGetParameter(unit, id, kAudioUnitScope_Global, 0, &value), "read AU parameter");
         require(std::isfinite(value), "parameter has a non-finite value");
     }
-    std::cout << "PASS 66 unique AU parameters and metadata\n";
+    std::cout << "PASS 1445 unique AU parameters and metadata\n";
     return ids;
 }
 
@@ -280,7 +281,7 @@ void verifyFactoryPresets(AudioUnit unit)
     checked(AudioUnitGetProperty(unit, kAudioUnitProperty_FactoryPresets, kAudioUnitScope_Global,
                                  0, &presets.value, &bytes), "read factory preset property");
     require(presets.value != nullptr && CFGetTypeID(presets.value) == CFArrayGetTypeID()
-            && CFArrayGetCount(presets.value) == 10, "registered AU must expose exactly 10 factory presets");
+            && CFArrayGetCount(presets.value) == 17, "registered AU must expose exactly 17 factory presets");
     std::unordered_set<SInt32> numbers;
     for (CFIndex index = 0; index < CFArrayGetCount(presets.value); ++index) {
         const auto* preset = static_cast<const AUPreset*>(CFArrayGetValueAtIndex(presets.value, index));
@@ -288,7 +289,7 @@ void verifyFactoryPresets(AudioUnit unit)
                 && preset->presetName != nullptr && CFGetTypeID(preset->presetName) == CFStringGetTypeID()
                 && CFStringGetLength(preset->presetName) > 0, "factory preset has invalid number or name");
     }
-    std::cout << "PASS 10 named factory presets\n";
+    std::cout << "PASS 17 named factory presets\n";
 }
 
 void verifyStateRoundtrip(AudioUnit unit, AudioUnitParameterID id)
@@ -361,17 +362,27 @@ void verifyBypass(AudioUnit unit, Input& input)
     std::cout << "PASS AU host bypass is sample-exact\n";
 }
 
-int run()
+int run(const char* bundlePath)
 {
     AudioComponentDescription description{};
     description.componentType = fourCC('a', 'u', 'f', 'x');
     description.componentSubType = fourCC('A', 'l', 'f', 'a');
     description.componentManufacturer = fourCC('A', 'l', 'p', 'h');
-    const auto component = AudioComponentFindNext(nullptr, &description);
-    require(component != nullptr, "registered AU aufx/Alfa/Alph was not found; install alpha first");
+    CFHandle<CFBundleRef> bundle;
+    AudioComponent component=nullptr;
+    if(bundlePath!=nullptr) {
+        CFHandle<CFURLRef> url;
+        url.value=CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault,reinterpret_cast<const UInt8*>(bundlePath),static_cast<CFIndex>(std::strlen(bundlePath)),true);
+        bundle.value=CFBundleCreate(kCFAllocatorDefault,url.value);
+        require(bundle.value!=nullptr&&CFBundleLoadExecutable(bundle.value),"load local AU bundle");
+        auto factory=reinterpret_cast<AudioComponentFactoryFunction>(CFBundleGetFunctionPointerForName(bundle.value,CFSTR("JuceAUFactory")));
+        require(factory!=nullptr,"resolve local AU factory");
+        component=AudioComponentRegister(&description,CFSTR("Alpha Audio: alpha local test"),0x00020000,factory);
+    } else component=AudioComponentFindNext(nullptr,&description);
+    require(component != nullptr,bundlePath?"cannot register local test AU (system AudioComponent service access is required)":"registered AU aufx/Alfa/Alph was not found; install alpha first");
     Input input; // Callback storage must outlive its AudioUnit, including uninitialization.
     Unit unit(component);
-    std::cout << "PASS registered aufx/Alfa/Alph instantiates\n";
+    std::cout << "PASS aufx/Alfa/Alph instantiates\n";
     const auto ids = verifyParameters(unit.value);
     verifyFactoryPresets(unit.value);
 
@@ -398,16 +409,16 @@ int run()
     } else {
         std::cout << "SKIP optional mono configuration (OSStatus " << monoStatus << ")\n";
     }
-    std::cout << "PASS independent installed AudioUnit host checks\n";
+    std::cout << "PASS independent AudioUnit host checks\n";
     return 0;
 }
 } // namespace
 
-int main()
+int main(int argc,char** argv)
 {
     @autoreleasepool {
         try {
-            return run();
+            return run(argc>1?argv[1]:nullptr);
         } catch (const std::exception& error) {
             std::cerr << "FAIL " << error.what() << '\n';
             return 1;

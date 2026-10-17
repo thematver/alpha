@@ -1,0 +1,17 @@
+PASS: dry, silence, mono, all 39 module modes at 44100 Hz
+PASS: dry, silence, mono, all 39 module modes at 48000 Hz
+PASS: dry, silence, mono, all 39 module modes at 96000 Hz
+MEASURE tape: loop area=0.614929, HF aging=-10.7002 dB, 95Hz bump=6.02687 dB
+MEASURE plate: RT60=0.971333 / 4.72417 s, early density=1, HF ratios=0.286797 / 0.544924
+MEASURE heat mode0: alias/fund -36.0344 dBc, ADAA improvement 24.8645 dB
+MEASURE heat mode1: alias/fund -35.8434 dBc, ADAA improvement 25.0451 dB
+MEASURE heat mode2: alias/fund -18.0729 dBc, ADAA improvement 33.5441 dB
+MEASURE heat mode3: alias/fund -39.0309 dBc, ADAA improvement 24.1789 dB
+MEASURE heat mode4: alias/fund -35.718 dBc, ADAA improvement 25.2756 dB
+MEASURE dust: Vinyl crest=5.89238, Hiss crest=2.0501, focused LF rejection=-28.7644 dB
+MEASURE transport: 123 BPM, shared distant PPQ Repeat error=8.90287e-10
+MEASURE transport: 123 BPM, independent distant PPQ Repeat error=2.05025e-09
+MEASURE transport: 999 BPM, shared distant PPQ Repeat error=4.04197e-09
+MEASURE transport: 999 BPM, independent distant PPQ Repeat error=7.14811e-09
+PASS: 819 checks; morph, block invariance, gated noise, stable stereo tail, automation, hot input, state reset, meters and scope
+BENCH: 4 s stereo / 48 kHz / 256 samples / 12-engine graph (5 active) in 405.404 ms (9.86669x realtime, 10.1351% of one core)

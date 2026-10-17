@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <limits>
 #include <memory>
 
 namespace alpha {
@@ -21,11 +22,12 @@ public:
     // TIME length is quantized to 1/8,1/4,1/2,1,2,4 clock cycles, capped at 4s.
     // PITCH modes: chromatic,smooth,octave. TIME: slip,reverse,repeat.
     // phase is optional host position in motion cycles, preferably unwrapped.
+    // Finite negative positions support host pre-roll; NaN means no host clock.
     // Repeat follows that clock; a seek crossfades into a re-anchored read bank.
     std::array<double, 2> process(int localIndex, std::array<double, 2> input,
                                 double amount, std::array<double, 4> controls,
                                 int mode, double cycleHz, double lfo = 0,
-                                double phase = -1) noexcept;
+                                double phase = std::numeric_limits<double>::quiet_NaN()) noexcept;
     double maximumTimeSeconds() const noexcept { return 4.0; }
 private:
     struct Impl;

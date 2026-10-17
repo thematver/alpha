@@ -217,13 +217,12 @@ struct TimePitchDSP::Impl {
         bank.phase[0] = wrap(bank.phase[0] + (1-timeSpeed)/bank.length);
         bank.phase[1] = wrap(bank.phase[1] + (1+timeSpeed)/bank.length);
         const double oldPhase = bank.repeatPhase;
-        bank.repeatPhase = bank.clockLinked && timeClockInitialized
-            ? wrap((clockPosition + currentCycleHz/sampleRate) / bank.clockFactor)
-            : wrap(bank.repeatPhase + 1/bank.length);
+        const bool linked=bank.clockLinked&&timeClockInitialized;
+        if(!linked)bank.repeatPhase=wrap(bank.repeatPhase+1/bank.length);
         const double period = bank.length - std::min(sampleRate*(.002+timeSmooth*.058),bank.length*.24);
         for (int head = 0; head < 2; ++head) {
             bank.loopPhase[(size_t)head] = wrap(bank.loopPhase[(size_t)head] + timeSpeed/period);
-            if (wrap(bank.repeatPhase + (double) head * .5) < wrap(oldPhase + (double) head * .5)) {
+            if (!linked&&wrap(bank.repeatPhase + (double) head * .5) < wrap(oldPhase + (double) head * .5)) {
                 bank.anchor[(size_t) head] = (double) timeMemory.count - 1 - bank.length - 4;
                 bank.loopPhase[(size_t) head] = 0;
             }
@@ -233,14 +232,14 @@ struct TimePitchDSP::Impl {
                               const std::array<double, 4>& controls, int mode,
                               double cycleHz, double hostPhase) noexcept {
         currentCycleHz = cycleHz;
-        const bool validClock = std::isfinite(hostPhase) && hostPhase >= 0;
+        const bool validClock = std::isfinite(hostPhase);
         bool clockJump = false;
         if (validClock) {
             if (!timeClockInitialized) {
-                clockPosition = hostPhase; absoluteClock = hostPhase >= 1;
+                clockPosition = hostPhase; absoluteClock = hostPhase < 0 || hostPhase >= 1;
                 clockJump = !timeFirst; timeClockInitialized = true;
             } else {
-                if (hostPhase >= 1) absoluteClock = true;
+                if (hostPhase < 0 || hostPhase >= 1) absoluteClock = true;
                 double delta = hostPhase - lastClockInput;
                 if (!absoluteClock) {
                     if (delta < -.5) delta += 1;
@@ -285,8 +284,17 @@ struct TimePitchDSP::Impl {
             timeFading = true; timeFade = 0;
             pendingClockReset = false;
         }
-        for (auto& bank : timeBanks) if (bank.clockLinked && timeClockInitialized)
-            bank.repeatPhase = wrap(clockPosition / bank.clockFactor);
+        for (auto& bank : timeBanks) if (bank.clockLinked && timeClockInitialized) {
+            const double nextPhase=wrap(clockPosition/bank.clockFactor);
+            // Detect boundaries between successive actual host positions.
+            // Predicting a next position here can miss a capture when its
+            // floating-point rounding differs from the next supplied PPQ.
+            for(int head=0;head<2;++head)if(wrap(nextPhase+head*.5)<wrap(bank.repeatPhase+head*.5)) {
+                bank.anchor[(size_t)head]=(double)timeMemory.count-1-bank.length-4;
+                bank.loopPhase[(size_t)head]=0;
+            }
+            bank.repeatPhase=nextPhase;
+        }
         timeSpeed = slew(timeSpeed, targetSpeed, smoothing);
         timeFeedback = slew(timeFeedback, targetFeedback, smoothing);
         timeSmooth = slew(timeSmooth, controls[2], smoothing);
@@ -346,7 +354,7 @@ std::array<double, 2> TimePitchDSP::process(int localIndex, std::array<double, 2
     if (!impl->prepared || localIndex < 0 || localIndex > 1) return input;
     for (auto& sample : input) if (!std::isfinite(sample)) sample = 0;
     for (auto& control : controls) control = unit(control);
-    amount = unit(amount); mode = std::clamp(mode, 0, 2); cycleHz = bounded(cycleHz, .03, 24);
+    amount = unit(amount); mode = std::clamp(mode, 0, 2); cycleHz = bounded(cycleHz, 1e-6, 4000);
     return localIndex == 0 ? impl->pitch(input, amount, controls, mode) : impl->time(input, amount, controls, mode, cycleHz, phase);
 }
 }

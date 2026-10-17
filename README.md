@@ -1,40 +1,47 @@
 # alpha
 
-A native character effect for Logic Pro. Audio Unit (AUv2), Apple Silicon, macOS 12 or later. Built with C++20 and JUCE 8.0.15.
+A native character and motion effect for Logic Pro. Audio Unit (AUv2) and Standalone, Apple Silicon, macOS 12 or later. C++20 / JUCE 8.0.15.
 
 ## Play
 
-In Logic, insert **Audio FX → Audio Units → Alpha Audio → alpha** on a mono or stereo track.
+Insert **Audio FX → Audio Units → Alpha Audio → alpha** on a mono or stereo track. The opening sound is **Sunday Tape Loop**, matching the supplied interface reference.
 
-- **Character** scales the strength of all six modules. **Mix** blends the processed signal with the original; **Output** adjusts the final gain.
-- **Tape → Wobble → Noise → Drive → Grit → Space** is the processing order. Each module has an amount, two character controls, three models and an independent on/off switch.
-- **A / B** selects a scene for editing and moves the morph to that endpoint. Scene amounts and the two detail parameters are independent. Use MAIN to access morph, shared motion and output. Copy and Swap are in the settings menu. Models, enable switches and motion settings are shared between scenes.
-- **Morph** continuously interpolates scene values. Copy duplicates a scene; Swap exchanges scenes and inverts the morph position to preserve the current sound.
-- **Motion** has a shared LFO with four shapes, free or tempo-synced rate, a master depth, and a bipolar amount route to each module. The LFO keeps running independently of scene morphing.
-- **Presets** contains ten factory starting points. The settings menu and preset browser Save/Open buttons store complete user presets as `.alphapreset` files. Logic projects and Logic's AU presets also preserve the full parameter state.
-- Input/output meters display actual audio. The spectrum shows actual output audio. Coloured shapes show the relative engine amounts; they are not frequency filters. Noise follows the incoming signal; it does not run as a free noise generator on a silent track.
+- The **core** bank contains DUST, DRIFT, HEAT, GRIT, SPACE and TAPE. The **shapers** bank contains PITCH, TIME, VOLUME, FILTER, PAN and WIDTH. All twelve engines can run together.
+- Drag a tile vertically to change Amount; Shift gives fine adjustment. Its dot enables the engine. Selecting a tile exposes its model and four character controls with physical units. Double-click restores the captured preset value; right-click offers engine operations.
+- The coloured spectrum regions are real frequency focus bands. Drag their edges or bodies to change where each engine processes audio. The analyser and meters show actual audio.
+- **Motion** provides eight shapes, editable curves with up to 32 nodes, free rate or seven host-synced divisions, a bipolar depth and a target chosen from Amount or four character controls. Each engine can have an independent profile. Follow Input retriggers motion on detected transients. Host PPQ anchors synced curves and TIME slices.
+- **A / B** selects the editable scene and moves Morph to its endpoint. All five scene fields per engine are independent. Models, focus, enable switches and motion profiles are shared. Copy and Swap are in settings; Swap also inverts Morph to preserve the interpolated sound. Morph remains automatable by the host.
+- **MAIN** exposes Flux, Tone, Width and Output. Flux adds deterministic slow variation; Roll creates a variation while respecting engine locks. Character scales engine amounts, Mix blends dry/wet, Delta monitors processed minus dry, and Auto-gain applies bounded, linked RMS compensation.
+- **Presets** has seventeen factory sounds, hover audition with state restoration, and Save/Open for complete `.alphapreset` files. Keep Amount, Mix and Output preserve those controls during browsing. Editor changes support undo/redo.
 
-All 66 parameters are exposed to host automation with stable IDs. Modulation is applied internally over base values and does not write automation to those base parameters.
+All **1445 parameters** are exposed to automation. The original 66 IDs and indices remain at the start of the list. Modulation operates over base values without writing automation into them. State stores curves, scenes, focus bands and routes; missing parameters in older states receive declared defaults. The upgraded DSP changes the sound of older presets.
+
+Fixed processing order: **Tape → Drift → Dust → Heat → Grit → Pitch → Time → Volume → Filter → Pan → Width → Space**. [DSP research](Research/DSP-models.md) documents primary sources, individual decisions for all 39 modes and measured limits. Models include magnetic hysteresis, a distinct Dattorro plate tank, an orthogonal room FDN, granular pitch, crossfaded time heads and a TPT filter. Names describe mechanisms and tonal families; no measured match to a named hardware unit is asserted.
 
 ## Build and install
 
-Requires Xcode with its macOS SDK, CMake, and Git. The build script retrieves the pinned official JUCE release if it is absent.
+Requires Xcode and its macOS SDK, CMake and Git. The build script retrieves the pinned official JUCE release if absent.
 
 ```sh
 bash scripts/build.sh
 bash scripts/install.sh
 ```
 
-The build produces `build/Alpha_artefacts/Release/AU/alpha.component` and a standalone application for UI checks. The installer signs the local build ad hoc, preserves an earlier installed alpha in `build/installed-backups/`, installs to the current user's Audio Units directory, and runs Apple's strict AU validator. No system Audio Units or other plug-ins are modified.
+Outputs: `build/Alpha_artefacts/Release/AU/alpha.component` and `build/Alpha_artefacts/Release/Standalone/alpha.app`. The installer signs ad hoc, backs up an earlier alpha, installs to the current user's Audio Units directory and runs Apple's strict AU validator. Save the Logic project before rescanning or restarting Logic. Standalone processing requires audio input routing.
 
-If Logic was already running during a new installation, open Plug-in Manager and rescan alpha, or restart Logic after saving your project. The standalone effect requires audio input routing; it is not a sound generator.
+## Verify and compare audio
 
-## Verification
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 6
+ctest --test-dir build --output-on-failure
+build/AlphaProcessorTests_artefacts/Release/AlphaProcessorTests build/qa/final
+python3 Tests/generate-demo.py
+build/AlphaAudioReview_artefacts/Release/AlphaAudioReview build/qa/alpha-demo.wav build/audio-review
+```
 
-`alpha-dsp-tests` covers processing safety and behavior. `AlphaProcessorTests` covers bus support, factory presets, automation IDs, state restore, scene operations, host time signatures and user presets. `Tests/AUHostTests.mm` renders the installed component independently through Apple's AudioToolbox API. `auval -v aufx Alfa Alph -strict` validates the installed AU interface. Run `Tests/generate-demo.py` with Python 3 to generate an original four-bar test loop.
+Tests exercise DSP response, aliasing, neutral paths, mode/parameter changes, sample rates, stereo/mono invariants, host sync, state, presets and actual native component bindings. Audio review renders every mode and preset with the same original four-bar loop, two seconds of warm-up and four seconds of tail. It writes 24-bit linked RMS-matched comparison WAVs and raw-level/DC/correlation/continuity/timing metrics. Applied listening gain is recorded; a peak cap can prevent exact RMS matching. Build and listening artifacts stay out of Git.
 
-The alpha interface uses six engine tiles: Dust (Noise), Drift (Wobble), Heat (Drive), Grit, Space and Tape. Select a tile to edit its tone, detail, amount and motion route. The native interface scales from 75% to 200%, with bundled Archivo and Geist Mono fonts. Roll varies unlocked engines; the lock button protects an engine. Editor changes support undo/redo. Bypass passes the dry input; Delta monitors processed minus dry; Auto-gain smoothly matches wet and dry RMS within a bounded gain range. Grit adds Crush, Decimate and Digital models with Bits and Rate controls. Existing alpha plug-in identity, original 54 automation IDs/indices, and older project/preset files are preserved.
+`Tests/AUHostTests.mm` loads the freshly built bundle in its own process and renders through Apple's AudioToolbox API without installing it. This CTest requires access to the system AudioComponent service. With no bundle argument it tests the installed component instead. `auval -v aufx Alfa Alph -strict` validates an installed AU. The native UI bundles Archivo/Geist Mono and scales from 75% to 200%.
 
-The plug-in uses a fixed module order, one modulation source and mono/stereo layouts. It has no sidechain input or MIDI learn. Saturation is a character algorithm, not an emulation of a named hardware product. Reverb and modulation tails continue as part of the processed path. Wobble intentionally delays its processed path by about 6 ms; Space size changes glide the delay read heads. The maximum calculated Bloom decay is about 10.7 seconds. The reported host tail is 15 seconds.
-
-JUCE is a third-party dependency; its license and notices are in `third_party/JUCE/LICENSE.md` and `third_party/JUCE/docs/`.
+There is no sidechain input, MIDI learn or engine reordering. DUST is input-gated on digital silence. Granular Pitch does not preserve vocal formants. Widening can require extra headroom. Nonlinear models retain residual aliasing at extreme settings. Maximum Bloom RT60 is 26 seconds. Host tail is 35 seconds for normal character sounds and extends conservatively with active TIME feedback, up to about 558 seconds at maximum feedback, so long repeats are not cut at 35 seconds. JUCE licensing and notices are in `third_party/JUCE/LICENSE.md` and `third_party/JUCE/docs/`.

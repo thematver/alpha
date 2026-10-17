@@ -128,5 +128,66 @@ void hostClockAndSeek() {
     }
     check(same,"wrapped host clock crosses ordinary cycle boundaries without false seeks");
 }
+void preRollAndFastClock() {
+    alpha::TimePitchDSP negative,positive;negative.prepare(sr,64);positive.prepare(sr,511);
+    bool equivalent=true,finite=true;double previous=0,maxJump=0;
+    for(int i=0;i<192000;++i) {
+        const double phase=i<96000?-8.25+(double)i*4/sr:-21.37+(double)(i-96000)*4/sr;
+        const std::array<double,2> input{tone(i,443)+.08*std::sin(i*.023),tone(i,661)};
+        const auto a=negative.process(1,input,1,{1,.8,.6,0},2,4,0,phase);
+        const auto b=positive.process(1,input,1,{1,.8,.6,0},2,4,0,phase+40);
+        for(int channel=0;channel<2;++channel) {equivalent&=std::abs(a[(size_t)channel]-b[(size_t)channel])<1e-8;finite&=std::isfinite(a[(size_t)channel]);}
+        if(i>95968&&i<100800)maxJump=std::max(maxJump,std::abs(a[0]-previous));previous=a[0];
+    }
+    check(equivalent&&finite,"negative pre-roll and backward seeks retain absolute bar phase across timeline zero");
+    check(maxJump<.12,"negative transport seek crossfades without a waveform discontinuity");
+    alpha::TimePitchDSP host,free;host.prepare(sr,17);free.prepare(sr,1024);bool aligned=true;
+    constexpr double rate=999.0/60*4;
+    for(int i=0;i<144000;++i) {
+        const std::array<double,2> input{tone(i,317),tone(i,443)};
+        const auto a=host.process(1,input,1,{1,.8,.6,0},2,rate,0,(double)i*rate/sr);
+        const auto b=free.process(1,input,1,{1,.8,.6,0},2,rate);
+        aligned&=std::isfinite(a[0])&&std::isfinite(a[1])&&std::abs(a[0]-b[0])<1e-8&&std::abs(a[1]-b[1])<1e-8;
+    }
+    check(aligned,"999 BPM sixteenth clock matches its free-running rate without hidden clamping");
+    alpha::TimePitchDSP slowHost,slowFree;slowHost.prepare(sr,17);slowFree.prepare(sr,1024);bool slowFinite=true;double slowError=0,slowMaximum=0;
+    constexpr double slowRate=10.0/60/16;
+    for(int i=0;i<768000;++i) {
+        const std::array<double,2> input{tone(i,317),tone(i,443)};
+        const auto a=slowHost.process(1,input,1,{1,.8,.6,0},2,slowRate,0,(double)i*slowRate/sr);
+        const auto b=slowFree.process(1,input,1,{1,.8,.6,0},2,slowRate);
+        for(size_t channel=0;channel<2;++channel){const double error=a[channel]-b[channel];slowFinite&=std::isfinite(a[channel]);slowError+=error*error;slowMaximum=std::max(slowMaximum,std::abs(error));}
+    }
+    const double slowRms=std::sqrt(slowError/(2*768000));
+    std::cout<<"10 BPM host/free error RMS "<<slowRms<<", maximum "<<slowMaximum<<'\n';
+    // Accumulated free phase can cross an exact four-second capture boundary
+    // one sample after absolute PPQ; allow that sampling precision, not drift.
+    check(slowFinite&&slowRms<.01&&slowMaximum<.04,"10 BPM four-bar clock respects the four-second slice cap within sample capture precision");
 }
-int main(){transparent();transposition();silenceStereoAndBounds();blockInvariance();automationAndReverse();boundedTail();modeControlsAndAliasing();repeatAndTimeAutomation();hostClockAndSeek();std::cout<<failures<<" failures\n";return failures?EXIT_FAILURE:EXIT_SUCCESS;}
+void longFeedbackTail() {
+    // The lowest supported rate preserves the same physical window/feedback
+    // durations while keeping this nine-minute stress render inexpensive.
+    constexpr int tailRate=8000,seconds=540,window=5*tailRate;
+    for(int mode=0;mode<3;++mode) {
+        alpha::TimePitchDSP dsp;dsp.prepare(tailRate,257);
+        double middleEnergy=0,lateEnergy=0,endEnergy=0,peak=0;bool finite=true;
+        for(int i=0;i<seconds*tailRate;++i) {
+            const double input=i<tailRate?.3*std::sin(2*pi*443*i/tailRate):0;
+            const auto output=dsp.process(1,{input,input},1,{1,.5,.5,1},mode,1,0,(double)i/tailRate);
+            for(double sample:output) {finite&=std::isfinite(sample);peak=std::max(peak,std::abs(sample));}
+            const double energy=output[0]*output[0];
+            if(i>=35*tailRate&&i<40*tailRate)middleEnergy+=energy;
+            if(i>=175*tailRate&&i<180*tailRate)lateEnergy+=energy;
+            if(i>=535*tailRate)endEnergy+=energy;
+        }
+        const double middle=std::sqrt(middleEnergy/window),late=std::sqrt(lateEnergy/window),end=std::sqrt(endEnergy/window);
+        const auto decibels=[](double value){return 20*std::log10(std::max(1e-30,value));};
+        std::cout<<"Time mode "<<mode<<" max-feedback RMS at35/175/535s "<<decibels(middle)<<" / "<<decibels(late)<<" / "<<decibels(end)<<" dBFS, peak "<<peak<<'\n';
+        check(finite&&peak<4,"four-second maximum-feedback tail remains finite and bounded for nine minutes");
+        check(middle>1e-4,"maximum-feedback Time remains audible beyond a35-second host tail");
+        check(late<middle*.01,"maximum-feedback Time energy decays by at least40dB by180seconds");
+        check(end<middle*.001,"maximum-feedback Time has decayed by at least60dB by540seconds");
+    }
+}
+}
+int main(){transparent();transposition();silenceStereoAndBounds();blockInvariance();automationAndReverse();boundedTail();modeControlsAndAliasing();repeatAndTimeAutomation();hostClockAndSeek();preRollAndFastClock();longFeedbackTail();std::cout<<failures<<" failures\n";return failures?EXIT_FAILURE:EXIT_SUCCESS;}
