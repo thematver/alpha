@@ -100,5 +100,33 @@ void repeatAndTimeAutomation() {
     for(int i=0;i<192000;++i){const int section=i/16000;std::array<double,4> c{section%2?.8:.1,section%2?.9:.2,section%2?.9:.1,.35};auto y=dsp.process(1,{tone(i,220),tone(i,330)},1,c,section%3,section%2?.7:1.4);if(i>10000&&std::abs(y[0]-previous)>maxJump){maxJump=std::abs(y[0]-previous);jumpSample=i;}previous=y[0];finite&=std::isfinite(y[0]);}
     std::cout<<"time automation max adjacent-sample change "<<maxJump<<" at sample "<<jumpSample<<'\n';check(finite&&maxJump<.3,"Time mode, speed, clock and length automation is continuous");
 }
+void hostClockAndSeek() {
+    alpha::TimePitchDSP a,b;a.prepare(sr,64);b.prepare(sr,1024);
+    double beforeDifference=0,afterDifference=0,previous=0,maxJump=0;
+    constexpr int seek=96000;
+    const std::array<double,4> controls{1,.8,.6,0}; // Four motion cycles per slice.
+    for(int i=0;i<240000;++i){
+        const double advancing=(double)i*4/sr;
+        const double phaseA=i<seek?8+advancing:21.37+(double)(i-seek)*4/sr;
+        const double phaseB=i<seek?9+advancing:21.37+(double)(i-seek)*4/sr;
+        const std::array<double,2> input{tone(i,443)+.08*std::sin(i*.023),tone(i,661)};
+        const auto x=a.process(1,input,1,controls,2,4,0,phaseA);
+        const auto y=b.process(1,input,1,controls,2,4,0,phaseB);
+        if(i>48000&&i<seek)beforeDifference=std::max(beforeDifference,std::abs(x[0]-y[0]));
+        if(i>seek+48000)afterDifference=std::max(afterDifference,std::abs(x[0]-y[0]));
+        if(i>seek-32&&i<seek+4800)maxJump=std::max(maxJump,std::abs(x[0]-previous));previous=x[0];
+    }
+    std::cout<<"host seek convergence "<<afterDifference<<", max adjacent change "<<maxJump<<'\n';
+    check(beforeDifference>.01,"four-cycle Repeat distinguishes absolute host bar phase");
+    check(afterDifference<1e-8,"seek reanchors Repeat deterministically despite different prior bar phases");
+    check(maxJump<.12,"transport seek reset crossfades without a waveform discontinuity");
+    alpha::TimePitchDSP absolute,wrapped;absolute.prepare(sr,128);wrapped.prepare(sr,128);bool same=true;
+    for(int i=0;i<96000;++i){const double phase=(double)i*2/sr;std::array<double,2>input{tone(i,220),tone(i,330)};
+        const auto x=absolute.process(1,input,1,{.4,.7,.5,0},2,2,0,phase);
+        const auto y=wrapped.process(1,input,1,{.4,.7,.5,0},2,2,0,phase-std::floor(phase));
+        same&=std::abs(x[0]-y[0])<1e-8&&std::abs(x[1]-y[1])<1e-8;
+    }
+    check(same,"wrapped host clock crosses ordinary cycle boundaries without false seeks");
 }
-int main(){transparent();transposition();silenceStereoAndBounds();blockInvariance();automationAndReverse();boundedTail();modeControlsAndAliasing();repeatAndTimeAutomation();std::cout<<failures<<" failures\n";return failures?EXIT_FAILURE:EXIT_SUCCESS;}
+}
+int main(){transparent();transposition();silenceStereoAndBounds();blockInvariance();automationAndReverse();boundedTail();modeControlsAndAliasing();repeatAndTimeAutomation();hostClockAndSeek();std::cout<<failures<<" failures\n";return failures?EXIT_FAILURE:EXIT_SUCCESS;}

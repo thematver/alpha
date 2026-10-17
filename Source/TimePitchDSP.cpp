@@ -87,11 +87,15 @@ struct TimePitchDSP::Impl {
     std::array<double, 3> timeModeWeights { 1, 0, 0 };
     struct TimeBank {
         double length = 24000, repeatPhase = 0;
+        double clockFactor = 1;
+        bool clockLinked = false;
         std::array<double, 2> phase {}, anchor {}, loopPhase {};
     };
     std::array<TimeBank, 2> timeBanks {};
     int activeTimeBank = 0;
     bool timeFading = false;
+    bool timeClockInitialized = false, absoluteClock = false, pendingClockReset = false;
+    double clockPosition = 0, lastClockInput = 0, currentCycleHz = .5;
     double timeFade = 0, timeSpeed = 1, timeFeedback = 0, timeEnabled = 0, timeSmooth = .5;
     std::array<double, 2> previousTime {}, dcInput {}, dcOutput {};
     int pitchCounter = 0, timeCounter = 0;
@@ -106,6 +110,8 @@ struct TimePitchDSP::Impl {
         pitchPhase = {}; pitchRatio = { 1, 1 }; pitchEnabled = 0;
         detectorPrevious = 0; detectorCrossing = -1; detectedPeriod = 0; periodConfidence = 0;
         timeBanks = {}; activeTimeBank = 0; timeFading = false; timeFade = 0;
+        timeClockInitialized = absoluteClock = pendingClockReset = false;
+        clockPosition = lastClockInput = 0; currentCycleHz = .5;
         previousTime = {}; dcInput = {}; dcOutput = {};
         pitchCounter = timeCounter = 0; pitchFirst = timeFirst = true;
         timeModeWeights = { 1, 0, 0 };
@@ -184,11 +190,15 @@ struct TimePitchDSP::Impl {
     void initialiseBank(TimeBank& bank, double length, const TimeBank* previous = nullptr) noexcept {
         bank.length = length;
         bank.phase = previous != nullptr ? previous->phase : std::array<double, 2>{0,0};
-        bank.repeatPhase = previous != nullptr ? previous->repeatPhase : 0;
+        bank.clockFactor = length * currentCycleHz / sampleRate;
+        bank.clockLinked = timeClockInitialized;
+        bank.repeatPhase = bank.clockLinked ? wrap(clockPosition / bank.clockFactor)
+                                           : previous != nullptr ? previous->repeatPhase : 0;
         for (int head = 0; head < 2; ++head) {
             const double p = wrap(bank.repeatPhase + (double) head * .5);
             bank.anchor[(size_t) head] = (double) timeMemory.count - 1 - length * (1 + p) - 4;
-            bank.loopPhase[(size_t) head] = previous != nullptr ? previous->loopPhase[(size_t) head] : wrap(p*timeSpeed);
+            bank.loopPhase[(size_t) head] = bank.clockLinked ? wrap(p*timeSpeed)
+                : previous != nullptr ? previous->loopPhase[(size_t) head] : wrap(p*timeSpeed);
         }
     }
     double bankRead(const TimeBank& bank, int ch, double crossfade) const noexcept {
@@ -207,7 +217,9 @@ struct TimePitchDSP::Impl {
         bank.phase[0] = wrap(bank.phase[0] + (1-timeSpeed)/bank.length);
         bank.phase[1] = wrap(bank.phase[1] + (1+timeSpeed)/bank.length);
         const double oldPhase = bank.repeatPhase;
-        bank.repeatPhase = wrap(bank.repeatPhase + 1/bank.length);
+        bank.repeatPhase = bank.clockLinked && timeClockInitialized
+            ? wrap((clockPosition + currentCycleHz/sampleRate) / bank.clockFactor)
+            : wrap(bank.repeatPhase + 1/bank.length);
         const double period = bank.length - std::min(sampleRate*(.002+timeSmooth*.058),bank.length*.24);
         for (int head = 0; head < 2; ++head) {
             bank.loopPhase[(size_t)head] = wrap(bank.loopPhase[(size_t)head] + timeSpeed/period);
@@ -218,7 +230,40 @@ struct TimePitchDSP::Impl {
         }
     }
     std::array<double, 2> time(std::array<double, 2> input, double amount,
-                              const std::array<double, 4>& controls, int mode, double cycleHz) noexcept {
+                              const std::array<double, 4>& controls, int mode,
+                              double cycleHz, double hostPhase) noexcept {
+        currentCycleHz = cycleHz;
+        const bool validClock = std::isfinite(hostPhase) && hostPhase >= 0;
+        bool clockJump = false;
+        if (validClock) {
+            if (!timeClockInitialized) {
+                clockPosition = hostPhase; absoluteClock = hostPhase >= 1;
+                clockJump = !timeFirst; timeClockInitialized = true;
+            } else {
+                if (hostPhase >= 1) absoluteClock = true;
+                double delta = hostPhase - lastClockInput;
+                if (!absoluteClock) {
+                    if (delta < -.5) delta += 1;
+                    if (delta > .5) delta -= 1;
+                }
+                const double expected = cycleHz/sampleRate;
+                clockJump = std::abs(delta-expected) > std::max(expected*8,1e-6);
+                clockPosition = absoluteClock ? hostPhase : clockPosition + delta;
+                // A wrapped caller cannot identify a whole-cycle seek; preserve
+                // its local cycle count. Unwrapped host callers are unambiguous.
+                if (clockJump && !absoluteClock) clockPosition = std::floor(clockPosition)+hostPhase;
+            }
+            lastClockInput = hostPhase;
+        } else if (timeClockInitialized) {
+            timeClockInitialized = absoluteClock = false;
+            for (auto& bank : timeBanks) bank.clockLinked = false;
+        }
+        if (clockJump) {
+            // Keep every currently audible read configuration continuous while
+            // its replacement is anchored to the new transport position.
+            for (auto& bank : timeBanks) bank.clockLinked = false;
+            pendingClockReset = true;
+        }
         constexpr std::array<double, 6> lengthFactors { .125, .25, .5, 1, 2, 4 };
         const int lengthIndex = std::clamp((int) std::floor(controls[0] * 5 + .5), 0, 5);
         const double targetLength = bounded(sampleRate * lengthFactors[(size_t) lengthIndex] / cycleHz, sampleRate * .025, sampleRate * 4);
@@ -234,10 +279,14 @@ struct TimePitchDSP::Impl {
         }
         // A length jump crossfades complete read configurations. Ramping a long
         // delay through intermediate positions would impose a large Doppler chirp.
-        if (!timeFading && std::abs(timeBanks[(size_t)activeTimeBank].length-targetLength) > .5) {
+        if (!timeFading && (pendingClockReset || std::abs(timeBanks[(size_t)activeTimeBank].length-targetLength) > .5)) {
             initialiseBank(timeBanks[(size_t)(1-activeTimeBank)],targetLength,&timeBanks[(size_t)activeTimeBank]);
+            timeBanks[(size_t)activeTimeBank].clockLinked = false;
             timeFading = true; timeFade = 0;
+            pendingClockReset = false;
         }
+        for (auto& bank : timeBanks) if (bank.clockLinked && timeClockInitialized)
+            bank.repeatPhase = wrap(clockPosition / bank.clockFactor);
         timeSpeed = slew(timeSpeed, targetSpeed, smoothing);
         timeFeedback = slew(timeFeedback, targetFeedback, smoothing);
         timeSmooth = slew(timeSmooth, controls[2], smoothing);
@@ -291,12 +340,13 @@ void TimePitchDSP::prepare(double sampleRate, int maximumBlockSize) {
 }
 void TimePitchDSP::reset() noexcept { impl->reset(); }
 std::array<double, 2> TimePitchDSP::process(int localIndex, std::array<double, 2> input,
-        double amount, std::array<double, 4> controls, int mode, double cycleHz, double lfo) noexcept {
+        double amount, std::array<double, 4> controls, int mode, double cycleHz,
+        double lfo, double phase) noexcept {
     (void) lfo;
     if (!impl->prepared || localIndex < 0 || localIndex > 1) return input;
     for (auto& sample : input) if (!std::isfinite(sample)) sample = 0;
     for (auto& control : controls) control = unit(control);
     amount = unit(amount); mode = std::clamp(mode, 0, 2); cycleHz = bounded(cycleHz, .03, 24);
-    return localIndex == 0 ? impl->pitch(input, amount, controls, mode) : impl->time(input, amount, controls, mode, cycleHz);
+    return localIndex == 0 ? impl->pitch(input, amount, controls, mode) : impl->time(input, amount, controls, mode, cycleHz, phase);
 }
 }

@@ -20,7 +20,8 @@ void ShaperDSP::prepare(double sr) {
     reset();
 }
 void ShaperDSP::reset() noexcept {
-    filters={};panWave.fill(0);std::fill(widthDelay.begin(),widthDelay.end(),0);writePosition=0;
+    filters={};panWave.fill(0);panWaveValid.fill(false);panHistoryInitialized=false;previousPanPhase=previousPanLfo=0;
+    std::fill(widthDelay.begin(),widthDelay.end(),0);writePosition=0;
     volumeGain=1;panPosition=0;sideLow=0;filterCounter=0;
     filterG=.1;filterK=1;filterA1=1/(1+filterG*(filterG+filterK));filterA2=filterG*filterA1;filterA3=filterG*filterA2;
     panSmooth=1-std::exp(-1/(rate*.018));widthBassCoefficient=0;
@@ -47,8 +48,8 @@ ShaperDSP::Stereo ShaperDSP::process(int index,Stereo input,double amount,Contro
     auto& weights=modeWeights[slot];for(size_t i=0;i<3;++i)weights[i]+=modeSmoothing*((mode==(int)i?1.0:0.0)-weights[i]);
     auto wet=input;
     if(index==0) {
-        // VCA envelopes: amplitude multiplication has no spectral aliasing of
-        // its own; audio-rate edges are explicitly slewed by attack/release.
+        // A VCA multiplies the signal by a gain envelope. The attack/release
+        // slew reduces edge bandwidth; modulation sidebands can still alias.
         const auto curve=.25*std::pow(16.0,c[0]);
         const auto phase=.5+.5*lfo;
         const auto floor=c[1]<1e-6?0.0:std::pow(10.0,(-60+60*c[1])/20);
@@ -91,9 +92,30 @@ ShaperDSP::Stereo ShaperDSP::process(int index,Stereo input,double amount,Contro
         }
     } else if(index==2) {
         double shifted=lfo;
-        if(phase>=0){const auto current=phase-std::floor(phase);panWave[(size_t)(current*512)%512]=lfo;
-            const auto shiftedPhase=current-c[2]-std::floor(current-c[2]);const auto position=shiftedPhase*512;const auto index=(size_t)position%512;
-            if(c[2]>1e-6)shifted=panWave[index]+(position-std::floor(position))*(panWave[(index+1)%512]-panWave[index]);}
+        if(std::isfinite(phase)&&phase>=0){
+            const auto current=phase-std::floor(phase);
+            double distance=current-previousPanPhase;if(distance<0)distance+=1;
+            if(!panHistoryInitialized||distance>.125){
+                // A seek invalidates phase history. Until the requested phase
+                // has been observed, use the current waveform instead of zero.
+                panWaveValid.fill(false);panHistoryInitialized=true;
+                const auto bin=(size_t)(current*512)%512;panWave[bin]=lfo;panWaveValid[bin]=true;
+            } else if(distance>0){
+                // Fast clocks can cross several table bins per audio sample.
+                // Fill all crossed boundaries, including an ordinary phase wrap.
+                const int first=(int)std::floor(previousPanPhase*512)+1;
+                const int last=(int)std::floor((previousPanPhase+distance)*512);
+                for(int bin=first;bin<=last;++bin){
+                    const auto fraction=(bin/512.0-previousPanPhase)/distance;
+                    const auto wrapped=(size_t)bin%512;
+                    panWave[wrapped]=previousPanLfo+(lfo-previousPanLfo)*fraction;panWaveValid[wrapped]=true;
+                }
+            }
+            previousPanPhase=current;previousPanLfo=lfo;
+            const auto shiftedPhase=current-c[2]-std::floor(current-c[2]);const auto position=shiftedPhase*512;const auto bin=(size_t)position%512;
+            if(c[2]>1e-6&&panWaveValid[bin]&&panWaveValid[(bin+1)%512])
+                shifted=panWave[bin]+(position-std::floor(position))*(panWave[(bin+1)%512]-panWave[bin]);
+        } else panHistoryInitialized=false;
         const auto target=std::clamp(c[0]*2-1+weights[1]*shifted*c[1],-1.0,1.0);
         const auto ms=.2+199.8*c[3]*c[3];panSmooth=1-std::exp(-1/(rate*ms*.001));
         panPosition+=panSmooth*(target-panPosition);

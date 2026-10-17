@@ -20,9 +20,12 @@ public:
     // TIME: length,speed,smooth,feedback. cycleHz is the shared motion clock;
     // TIME length is quantized to 1/8,1/4,1/2,1,2,4 clock cycles, capped at 4s.
     // PITCH modes: chromatic,smooth,octave. TIME: slip,reverse,repeat.
+    // phase is optional host position in motion cycles, preferably unwrapped.
+    // Repeat follows that clock; a seek crossfades into a re-anchored read bank.
     std::array<double, 2> process(int localIndex, std::array<double, 2> input,
                                 double amount, std::array<double, 4> controls,
-                                int mode, double cycleHz, double lfo = 0) noexcept;
+                                int mode, double cycleHz, double lfo = 0,
+                                double phase = -1) noexcept;
     double maximumTimeSeconds() const noexcept { return 4.0; }
 private:
     struct Impl;

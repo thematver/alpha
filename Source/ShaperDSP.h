@@ -21,6 +21,9 @@ private:
     std::array<std::array<double,3>,4> modeWeights {};
     std::vector<double> widthDelay;
     std::array<double,512> panWave {};
+    std::array<bool,512> panWaveValid {};
+    double previousPanPhase=0,previousPanLfo=0;
+    bool panHistoryInitialized=false;
     size_t writePosition=0;
     double rate=48000, volumeGain=1, panPosition=0, sideLow=0;
     double filterG=.1,filterK=1,filterA1=1,filterA2=0,filterA3=0;

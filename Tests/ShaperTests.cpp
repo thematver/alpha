@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <cstdlib>
+#include <limits>
 namespace {
 constexpr double pi=3.14159265358979323846;
 int checks=0;
@@ -11,6 +12,17 @@ double energy(int module,int mode,alpha::ShaperDSP::Controls controls,double fre
     alpha::ShaperDSP dsp;dsp.prepare(sr);double sum=0;
     for(int i=0;i<(int)sr;++i){const auto x=.2*std::sin(2*pi*frequency*i/sr);const auto y=dsp.process(module,{x,x},1,controls,mode,std::sin(2*pi*2*i/sr));if(i>(int)sr/2)sum+=y[0]*y[0];}
     return std::sqrt(sum/(sr/2));
+}
+double panPhaseError(double sr,double frequency,int shape){
+ alpha::ShaperDSP dsp;dsp.prepare(sr);double squaredError=0;int count=0;
+ const auto waveform=[shape](double p){p-=std::floor(p);return shape==0?std::sin(2*pi*p):shape==1?1-4*std::abs(p-.5):shape==2?(p<.5?1.:-1.):.6*std::sin(2*pi*p)+.4*std::sin(6*pi*p);};
+ for(int n=0;n<(int)(sr*2);++n){const double phase=(double)n*frequency/sr,wrapped=phase-std::floor(phase);
+  const auto y=dsp.process(2,{.2,.2},1,{.5,1,.25,0},1,waveform(wrapped),wrapped);
+  const auto desiredPhase=wrapped-.25-std::floor(wrapped-.25);
+  const bool awayFromSquareEdge=shape!=2||(desiredPhase>.035&&std::abs(desiredPhase-.5)>.035&&desiredPhase<.965);
+  if(n>(int)(sr*.5)&&awayFromSquareEdge){const double measured=4*std::atan2(y[1],y[0])/pi-1;const auto error=measured-waveform(desiredPhase);squaredError+=error*error;++count;}
+ }
+ return std::sqrt(squaredError/std::max(1,count));
 }
 }
 int main(){
@@ -46,5 +58,14 @@ int main(){
  dsp.reset();for(int n=0;n<20000;++n)dsp.process(1,{.2,.2},1,{.5,1,0,1},0,0);
  double tail=0;for(int n=0;n<96000;++n){auto y=dsp.process(1,{0,0},1,{.5,1,0,1},0,0);if(n>90000)tail=std::max(tail,std::abs(y[0]));}
  check(tail<1e-8,"high-resonance filter energy decays after input stops");
+ for(double sr:{8000.,44100.,96000.})for(int shape=0;shape<4;++shape){
+  const double error=panPhaseError(sr,20,shape);std::cout<<"Pan phase RMS error sr="<<sr<<" shape="<<shape<<": "<<error<<'\n';
+  check(error<.05,"phase-shifted auto pan preserves sine,triangle,square and custom waves at fast clocks");
+ }
+ dsp.reset();bool validPhase=true;
+ for(double phase:{std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN(),-1.}){
+  auto y=dsp.process(2,{.2,.2},1,{.5,1,.25,0},1,.3,phase);validPhase&=std::isfinite(y[0])&&std::isfinite(y[1]);
+ }
+ check(validPhase,"nonfinite or unavailable pan phase uses the valid LFO fallback");
  std::cout<<"PASS "<<checks<<" shaper checks\n";
 }
