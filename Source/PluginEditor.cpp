@@ -309,7 +309,7 @@ struct AlphaAudioProcessorEditor::Impl final : juce::Component,juce::Timer {
     void button(juce::TextButton& b,juce::String label,juce::String variant="",juce::String icon="") {b.setButtonText(label);b.getProperties().set("variant",variant);if(icon.isNotEmpty())b.getProperties().set("icon",icon);addAndMakeVisible(b);}
     void paint(juce::Graphics& g) override {
         g.setColour(paper);g.fillRoundedRectangle(getLocalBounds().toFloat(),18);
-        drawLogo(g);text(g,"patina",{55,15,110,36},20,ink,juce::Justification::centredLeft,true);
+        drawLogo(g);text(g,"alpha",{55,15,110,36},20,ink,juce::Justification::centredLeft,true);
         g.setColour(ink);g.drawRoundedRectangle(910.5f,16.5f,67,31,8,1);
         // The preset button provides the hit area; its actual name and category stay visible here.
         g.setColour(panel);g.fillRoundedRectangle(208,14,270,36,8);g.setColour(rule);g.drawRoundedRectangle(208.5f,14.5f,269,35,8,1);
@@ -382,7 +382,7 @@ private:
         auto safe=juce::Component::SafePointer<Impl>(this);menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&settings),[safe](int result){if(!safe)return;if(result==1||result==2)safe->choosePresetFile(result==1);else if(result==3){safe->remember();safe->processor.copyScene(safe->editScene,1-safe->editScene);safe->refresh();}else if(result==4){safe->remember();safe->processor.swapScenes();safe->refresh();}else if(result>=75){if(auto* editor=safe->findParentComponentOfClass<AlphaAudioProcessorEditor>())editor->setSize(designWidth*result/100,designHeight*result/100);}});
     }
     void choosePresetFile(bool save){if(save){const auto result=processor.userPresetDirectory().createDirectory();if(result.failed()){status="Cannot create preset directory";statusTicks=120;return;}}
-        chooser=std::make_unique<juce::FileChooser>(save?"Save patina sound":"Open patina sound",save?processor.userPresetDirectory().getChildFile("My sound.alphapreset"):processor.userPresetDirectory(),"*.alphapreset",true);
+        chooser=std::make_unique<juce::FileChooser>(save?"Save alpha sound":"Open alpha sound",save?processor.userPresetDirectory().getChildFile("My sound.alphapreset"):processor.userPresetDirectory(),"*.alphapreset",true);
         auto safe=juce::Component::SafePointer<Impl>(this);const int flags=save?(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting):(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles);
         chooser->launchAsync(flags,[safe,save](const juce::FileChooser& dialog){if(!safe)return;auto f=dialog.getResult();if(f==juce::File())return;if(save)f=f.withFileExtension("alphapreset");else safe->remember();const bool ok=save?safe->processor.saveUserPreset(f):safe->processor.loadUserPreset(f);safe->status=ok?(save?"Saved ":"Opened ")+f.getFileNameWithoutExtension():"Could not "+juce::String(save?"save":"open")+" sound";safe->statusTicks=120;if(ok&&!save){safe->lastProgram=safe->processor.getCurrentProgram();safe->selectScene(safe->processor.value("morph")>=50?1:0,false);}safe->presets.selectCurrent();safe->refresh();});
     }
