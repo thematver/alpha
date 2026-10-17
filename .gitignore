@@ -1,0 +1,7 @@
+build/
+third_party/JUCE/
+.DS_Store
+*.component
+*.app
+*.dSYM
+dist/
